@@ -200,74 +200,114 @@ class Board:
 		#*#*#*# TODO: Write your implementation of forward checking here #*#*#*#
 		#======================================================================# 
 
-        for variable in reassigned_variables:
-            assigned_value = self.config[variable]
-            
-            # Skip if variable is not assigned (0 means unassigned)
-            if assigned_value == 0:
-                continue
-            
+        queue = list(reassigned_variables)
+        while queue:
+            variable = queue.pop(0)
+            value = self.config[variable]
+
             row, col = ROW.index(variable[0]), COL.index(variable[1])
-            
-            # Remove assigned value from all other cells in the same row
-            for j in range(self.n):
-                neighbor = ROW[row] + COL[j]
-                if neighbor != variable and assigned_value in self.domains[neighbor]:
-                    self.domains[neighbor].remove(assigned_value)
-                    # If domain becomes empty, forward checking fails
-                    if not self.domains[neighbor]:
-                        return False
-            
-            # Remove assigned value from all other cells in the same column
-            for i in range(self.n):
-                neighbor = ROW[i] + COL[col]
-                if neighbor != variable and assigned_value in self.domains[neighbor]:
-                    self.domains[neighbor].remove(assigned_value)
-                    # If domain becomes empty, forward checking fails
-                    if not self.domains[neighbor]:
-                        return False
-            
-            # Handle horizontal inequalities
-            if col < self.n - 1:
-                inequality_key = variable + '*'
-                if inequality_key in self.config and self.config[inequality_key] in ['<', '>']:
-                    neighbor = ROW[row] + COL[col + 1]
-                    self.apply_inequality_forward_check(variable, neighbor, self.config[inequality_key])
-            
-            # Handle vertical inequalities
-            if row < self.n - 1:
-                inequality_key = ROW[row] + '*' + COL[col]
-                if inequality_key in self.config and self.config[inequality_key] in ['<', '>']:
-                    neighbor = ROW[row + 1] + COL[col]
-                    self.apply_inequality_forward_check(variable, neighbor, self.config[inequality_key])
+
+            # Apply inequality constraints
+            inequalities = self.get_inequality_neighbors(variable)
+            for neighbor, inequality in inequalities:
+                domain_before = self.domains[neighbor][:]
+                if not self.apply_inequality_forward_check(variable, neighbor, inequality):
+                    return False
+                if self.domains[neighbor] != domain_before and neighbor not in queue and self.config[neighbor] == 0:
+                    queue.append(neighbor)
+
+            if value != 0:
+                # Remove the value from the domains of variables in the same row
+                for j in range(self.n):
+                    neighbor = ROW[row] + COL[j]
+                    if neighbor != variable and value in self.domains[neighbor]:
+                        self.domains[neighbor].remove(value)
+                        if not self.domains[neighbor]:
+                            return False  # Domain wiped out
+                        if neighbor not in queue and self.config[neighbor] == 0:
+                            queue.append(neighbor)
+
+                # Remove the value from the domains of variables in the same column
+                for i in range(self.n):
+                    neighbor = ROW[i] + COL[col]
+                    if neighbor != variable and value in self.domains[neighbor]:
+                        self.domains[neighbor].remove(value)
+                        if not self.domains[neighbor]:
+                            return False
+                        if neighbor not in queue and self.config[neighbor] == 0:
+                            queue.append(neighbor)
 
         return True
-        #=================================#
-		#*#*#*# Your code ends here #*#*#*#
-		#=================================#
 
     def apply_inequality_forward_check(self, variable1, variable2, inequality):
-        '''
-        forward checking for neighboring cells based on inequality constraints
-        '''
         domain1 = self.domains[variable1]
         domain2 = self.domains[variable2]
 
         if inequality == '<':
-            # Update domain1: values less than the max of domain2
-            max_domain2 = max(domain2) if domain2 else 0
-            self.domains[variable1] = [val1 for val1 in domain1 if val1 < max_domain2]
-            # Update domain2: values greater than the min of domain1
-            min_domain1 = min(self.domains[variable1]) if self.domains[variable1] else self.n + 1
-            self.domains[variable2] = [val2 for val2 in domain2 if val2 > min_domain1]
+            new_domain1 = [val1 for val1 in domain1 if any(val1 < val2 for val2 in domain2)]
+            new_domain2 = [val2 for val2 in domain2 if any(val2 > val1 for val1 in new_domain1)]
         elif inequality == '>':
-            # Update domain1: values greater than the min of domain2
-            min_domain2 = min(domain2) if domain2 else self.n + 1
-            self.domains[variable1] = [val1 for val1 in domain1 if val1 > min_domain2]
-            # Update domain2: values less than the max of domain1
-            max_domain1 = max(self.domains[variable1]) if self.domains[variable1] else 0
-            self.domains[variable2] = [val2 for val2 in domain2 if val2 < max_domain1]
+            new_domain1 = [val1 for val1 in domain1 if any(val1 > val2 for val2 in domain2)]
+            new_domain2 = [val2 for val2 in domain2 if any(val2 < val1 for val1 in new_domain1)]
+        else:
+            return True  # No inequality to enforce
+
+        if not new_domain1 or not new_domain2:
+            return False  # Domain wipeout
+
+        # Update domains if they have changed
+        if new_domain1 != domain1:
+            self.domains[variable1] = new_domain1
+        if new_domain2 != domain2:
+            self.domains[variable2] = new_domain2
+
+        return True
         
+    def get_inequality_neighbors(self, variable):
+        '''
+        Returns a list of tuples (neighbor_variable, inequality) for all inequality constraints involving the given variable.
+        The inequality is from variable to neighbor.
+        '''
+        row, col = ROW.index(variable[0]), COL.index(variable[1])
+        inequalities = []
+
+        # Check horizontal inequalities
+        # Inequality to the right
+        if col < self.n - 1:
+            inequality_key = variable + '*'
+            if inequality_key in self.config and self.config[inequality_key] in ['<', '>']:
+                neighbor = ROW[row] + COL[col + 1]
+                inequality = self.config[inequality_key]
+                inequalities.append((neighbor, inequality))
+        # Inequality from the left
+        if col > 0:
+            inequality_key = ROW[row] + COL[col - 1] + '*'
+            if inequality_key in self.config and self.config[inequality_key] in ['<', '>']:
+                neighbor = ROW[row] + COL[col - 1]
+                inequality = self.config[inequality_key]
+                # Reverse the inequality since it's from neighbor to variable
+                reverse_inequality = '<' if inequality == '>' else '>'
+                inequalities.append((neighbor, reverse_inequality))
+
+        # Check vertical inequalities
+        # Inequality below
+        if row < self.n - 1:
+            inequality_key = variable[0] + '*' + variable[1]
+            if inequality_key in self.config and self.config[inequality_key] in ['<', '>']:
+                neighbor = ROW[row + 1] + COL[col]
+                inequality = self.config[inequality_key]
+                inequalities.append((neighbor, inequality))
+        # Inequality from above
+        if row > 0:
+            inequality_key = ROW[row - 1] + '*' + COL[col]
+            if inequality_key in self.config and self.config[inequality_key] in ['<', '>']:
+                neighbor = ROW[row - 1] + COL[col]
+                inequality = self.config[inequality_key]
+                # Reverse the inequality since it's from neighbor to variable
+                reverse_inequality = '<' if inequality == '>' else '>'
+                inequalities.append((neighbor, reverse_inequality))
+
+        return inequalities
     #=================================================================================#
 	#*#*#*# Optional: Write any other functions you may need in the Board Class #*#*#*#
 	#=================================================================================#
@@ -331,6 +371,22 @@ class Board:
                 cell2 = next_row + col
             return cell1, cell2
         return None, None
+    
+    def update_config_str(self):
+        '''
+        Updates the configuration string based on the current board configuration.
+        '''
+        config_string = ''
+        for i in range(0, self.n):
+            for j in range(0, self.n):
+                config_string += str(self.config[ROW[i] + COL[j]])
+                if j != self.n - 1:
+                    config_string += self.config[ROW[i] + COL[j] + '*']
+            if i != self.n - 1:
+                for j in range(0, self.n):
+                    config_string += self.config[ROW[i] + '*' + COL[j]]
+        self.config_str = config_string
+
     #=================================#
 	#*#*#*# Your code ends here #*#*#*#
 	#=================================#
@@ -351,34 +407,49 @@ def backtracking(board):
     #==========================================================#
 	#*#*#*# TODO: Write your backtracking algorithm here #*#*#*#
 	#==========================================================#
-    # Step 1: Check if all variables are assigned (base case)
     unassigned_vars = [var for var in board.get_variables() if board.config[var] == 0]
     if not unassigned_vars:
-        # If there are no unassigned variables, return the board as solved
-        return board
+        if board.row_constraint() and board.column_constraint() and board.binary_constraint():
+            return board
+        else:
+            return None
 
-    # Step 2: Select variable with Minimum Remaining Value (MRV)
     mrv_var = min(unassigned_vars, key=lambda var: len(board.domains[var]))
 
-    # Step 3: Try each value in the domain of the selected variable
+    # Copy the domain to avoid modifying the board's domains
     original_domain = board.domains[mrv_var][:]
+
     for value in original_domain:
+        # Backup the current state
+        domains_backup = copy.deepcopy(board.domains)
+        config_backup = board.config.copy()
+
         # Assign the value to the variable
         board.config[mrv_var] = value
 
+        # Check if the assignment is consistent with constraints
+        if not board.row_constraint() or not board.column_constraint() or not board.binary_constraint():
+            # Restore state and continue
+            board.config = config_backup
+            board.domains = domains_backup
+            continue
+
         # Perform forward checking after the assignment
-        domains_backup = copy.deepcopy(board.domains)  # Backup domains before applying forward checking
-        if board.forward_checking([mrv_var]):
-            # Recursively call backtracking to solve the rest of the board
-            result = backtracking(board)
-            if result:
-                return result  # If a solution is found, return the solved board
+        if not board.forward_checking([mrv_var]):
+            # Forward checking failed, restore state and continue
+            board.config = config_backup
+            board.domains = domains_backup
+            continue
+
+        # Recursively call backtracking
+        result = backtracking(board)
+        if result:
+            return result
 
         # Backtrack: undo the assignment and restore domains
-        board.config[mrv_var] = 0
+        board.config = config_backup
         board.domains = domains_backup
 
-    # If no valid assignment is found, return None to indicate failure
     return None
 
     #=================================#
@@ -395,12 +466,12 @@ def solve_board(board):
 	#================================================================#
 
     start_time = time.time()
-
     solved_board = backtracking(board)
-
     end_time = time.time()
-
     runtime = end_time - start_time
+
+    if solved_board:
+        solved_board.update_config_str()
 
     return solved_board, runtime
 
